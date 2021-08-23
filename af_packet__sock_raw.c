@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 struct pseudo_header
 {
@@ -86,11 +87,11 @@ void update_tcpudp_sum(unsigned char *packet,int len_packet, u_int8_t protocol)
 
 struct iphdr *fill_ip_after_eth(unsigned char *packet, int lenpacket, char *src_ip, char *dst_ip, u_int8_t protocol)
 {
-        struct iphdr *iph = (struct iphdr *)packet;
+        struct iphdr *iph = (struct iphdr *)(packet+sizeof(struct ethhdr));
         iph->ihl = 5;
         iph->version = 4;
         iph->tos = 0;
-        iph->tot_len = htons(lenpacket);
+        iph->tot_len = htons(lenpacket-sizeof(struct ethhdr));
         iph->id = htons(rand()&0xffff);        //Id of this packet
         iph->frag_off = 0x40;
         iph->ttl = 64;
@@ -98,18 +99,18 @@ struct iphdr *fill_ip_after_eth(unsigned char *packet, int lenpacket, char *src_
         iph->saddr = inet_addr (src_ip);        //Spoof the source ip address
         iph->daddr = inet_addr (dst_ip);
 
-	update_ip_sum(packet);
+	update_ip_sum(packet+sizeof(struct ethhdr));
 
 	return iph;
 }
 
 unsigned char *fill_transport_layer_after_ip(unsigned char *packet, int lenpacket, u_int8_t protocol, short src_port, short dst_port)
 {
-    unsigned char *layer4h = packet + sizeof (struct iphdr);
+    unsigned char *layer4h = packet + sizeof(struct ethhdr) + sizeof (struct iphdr);
     struct tcphdr *tcph = (struct tcphdr *)layer4h;
     struct udphdr *udph = (struct udphdr *)layer4h;
 
-    int len_layer4_header_included = lenpacket - sizeof (struct iphdr);
+    int len_layer4_header_included = lenpacket - sizeof (struct iphdr) - sizeof(struct ethhdr);
 
     if(protocol == IPPROTO_UDP)
     {
@@ -137,43 +138,78 @@ unsigned char *fill_transport_layer_after_ip(unsigned char *packet, int lenpacke
 
     }
 
-    update_tcpudp_sum(packet, lenpacket , protocol);
+    update_tcpudp_sum(packet+sizeof(struct ethhdr), lenpacket-sizeof(struct ethhdr) , protocol);
 
     return layer4h;
 
 }
 
-int main()
+int is_tcp_or_udp_over_ip(unsigned char *packet)
 {
-	int packet_socket = socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_IP)); // receive ALL IP packets (ETH_P_IP) without OSI LEVEL 2 data (SOCK_DGRAM)
+    struct ethhdr *eh = (struct ethhdr *) packet;
+    if( eh->h_proto == htons(ETH_P_IP))
+    {
+        struct iphdr *iph = (struct iphdr *) (packet + sizeof (struct ethhdr));
+        if(iph->protocol == IPPROTO_TCP || iph->protocol == IPPROTO_UDP)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+int eq_addr(unsigned char *packet, const struct in_addr addr, int src)
+{
+    struct ethhdr *eh = (struct ethhdr *) packet;
+    if( eh->h_proto == htons(ETH_P_IP))
+    {
+        struct iphdr *iph = (struct iphdr *) (packet + sizeof (struct ethhdr));
+        if( (src == 1 && addr.s_addr == iph->saddr) || (src == 0 && addr.s_addr == iph->daddr) )
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+int get_packet_size_from_ip(unsigned char *packet)
+{
+    struct ethhdr *eh = (struct ethhdr *) packet;
+    if( eh->h_proto == htons(ETH_P_IP))
+    {
+	    struct iphdr *iph = (struct iphdr *) (packet + sizeof (struct ethhdr));
+	    return sizeof(struct ethhdr) + ntohs(iph->tot_len);
+    }
+    return -1;
+
+}
+int is_tcp_port(unsigned char *packet, short port)
+{
+    struct tcphdr *tcph = (struct tcphdr *) (packet + sizeof (struct ethhdr) + sizeof(struct iphdr));
+    if(tcph->source == htons(port) || tcph->dest == htons(port))
+	    return 1;
+    return 0;
+}
+int main(int argc, char *argv[])
+{
+	int packet_socket = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_IP)); 
 
 
 	/* test reception */
-	char packet[4096];
+	unsigned char packet[4096];
 	struct sockaddr rcvaddr;
-	int len = sizeof (rcvaddr);
+	struct in_addr addr;
+        addr.s_addr = inet_addr("192.168.30.3");
 
 	// use nc to send a use packet
-	while(1)
+	/*while(1)
 	{
+	  int len = sizeof (rcvaddr);
 	  int len_packet = recvfrom(packet_socket, packet, 4096,0,&rcvaddr,&len);
-	  struct iphdr *iph = (struct iphdr *)packet;
-	  
-	  struct in_addr src;
-	  src.s_addr = iph->saddr;
-	  
-	  struct in_addr dst;
-	  dst.s_addr = iph->daddr;
-
-	  if(strcmp("192.168.30.3",inet_ntoa(src)) == 0)
+          if(len_packet > 0 && is_tcp_or_udp_over_ip(packet) == 1 && eq_addr(packet,addr,0) == 1)
 	  {
-	    printf("%s -> ",inet_ntoa(src));
-	    printf("%s. Len_packet: %d\n",inet_ntoa(dst),len_packet);
+		  if(is_tcp_port(packet, 22) == 0)
+ 		    printf("%d\n",get_packet_size_from_ip(packet));
 	  }
-
-	}
-
-
+	}*/
 	/*
 	unsigned char mac_gw_direct[]={0x0c,0x7e,0x08,0x9e,0xde,0x02};
 
@@ -208,8 +244,43 @@ int main()
 	   usleep(1000);
        }*/
 
+	// send
+	//
+	int totalsize=atoi(argv[1]);
+	int lendata = totalsize - sizeof(struct ethhdr) - sizeof(struct iphdr) - sizeof(struct udphdr);
+	unsigned char data[lendata];
+	int lenpacket = sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(data);
+	packet[0] = 0x0c;
+	packet[1] = 0x7e;
+	packet[2] = 0x08;
+	packet[3] = 0xbc;
+	packet[4] = 0x6f;
+	packet[5] = 0x00;
+	
+	packet[6] = 0x0c;
+	packet[7] = 0x7e;
+	packet[8] = 0x08;
+	packet[9] = 0x49;
+	packet[10] = 0x13;
+	packet[11] = 0x00;
 
+	packet[12] = 0x08;
+	packet[13] = 0x00;
 
+	fill_ip_after_eth(packet, lenpacket, "192.168.30.4", "192.168.30.3", IPPROTO_TCP);
+	fill_transport_layer_after_ip(packet, lenpacket, IPPROTO_TCP, 12345, 54321);
+
+	struct sockaddr_ll socket_address;
+	socket_address.sll_ifindex = 2;
+	socket_address.sll_halen = ETH_ALEN;
+	socket_address.sll_addr[0]=packet[0];
+	socket_address.sll_addr[1]=packet[1];
+	socket_address.sll_addr[2]=packet[2];
+	socket_address.sll_addr[3]=packet[3];
+	socket_address.sll_addr[4]=packet[4];
+	socket_address.sll_addr[5]=packet[5];
+
+	assert(sendto(packet_socket,packet,lenpacket,0,(struct sockaddr *)&socket_address, sizeof(socket_address)) != -1);
 
 
 
