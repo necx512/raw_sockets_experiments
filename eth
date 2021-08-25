@@ -1,3 +1,4 @@
+#      ip link set mtu 1500 dev ens3
 sudo ethtool -K ens3 gro off tx off rx off sg off
 echo "=============="
 sudo ethtool -k ens3 | grep -v off
