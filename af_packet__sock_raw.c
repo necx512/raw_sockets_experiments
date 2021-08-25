@@ -14,6 +14,9 @@
 #include <string.h>
 #include <assert.h>
 
+
+int lendata;
+unsigned char *data;
 struct pseudo_header
 {
         u_int32_t source_address;
@@ -80,7 +83,10 @@ void update_tcpudp_sum(unsigned char *packet,int len_packet, u_int8_t protocol)
         char *pseudogram = malloc(psize);
         memcpy(pseudogram , (char*) &psh , sizeof (struct pseudo_header));
         memcpy(pseudogram + sizeof(struct pseudo_header) , layer4h , len_from_layer4_level);
-        tcph->check = csum( (unsigned short*) pseudogram , psize);
+	if(protocol == IPPROTO_UDP)
+		udph->check = csum( (unsigned short*) pseudogram , psize);
+	else
+                tcph->check = csum( (unsigned short*) pseudogram , psize);
         free(pseudogram);
 
 }
@@ -111,6 +117,7 @@ unsigned char *fill_transport_layer_after_ip(unsigned char *packet, int lenpacke
     struct udphdr *udph = (struct udphdr *)layer4h;
 
     int len_layer4_header_included = lenpacket - sizeof (struct iphdr) - sizeof(struct ethhdr);
+	
 
     if(protocol == IPPROTO_UDP)
     {
@@ -247,9 +254,8 @@ int main(int argc, char *argv[])
 	// send
 	//
 	int totalsize=atoi(argv[1]);
-	int lendata = totalsize - sizeof(struct ethhdr) - sizeof(struct iphdr) - sizeof(struct udphdr);
-	unsigned char data[lendata];
-	int lenpacket = sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(data);
+	lendata = totalsize - sizeof(struct ethhdr) - sizeof(struct iphdr) - sizeof(struct udphdr);
+	data = packet + totalsize - lendata;
 
 	unsigned char mac1[]={0x0c,0x7e,0x08,0x31,0x12,0x03}; // 192.168.10.1
 	
@@ -262,15 +268,20 @@ int main(int argc, char *argv[])
 
 	for(int i=0;i<6;++i)
 	{
-		packet[i] = mac1[i];//dst
-		packet[6+i] = mac2[i];//src
+		packet[i] = mac3[i];//dst
+		packet[6+i] = mac4[i];//src
 	}
 
 	packet[12] = 0x08;
 	packet[13] = 0x00;
 
-	fill_ip_after_eth(packet, lenpacket, "192.168.30.4", "192.168.30.3", IPPROTO_TCP);
-	fill_transport_layer_after_ip(packet, lenpacket, IPPROTO_UDP, 12345, 54321);
+        memset(data,'b', lendata);
+	data[lendata-2] = 'c';
+	data[lendata-1] = '\n';
+
+	fill_ip_after_eth(packet, totalsize, "192.168.30.3", "192.168.10.1", IPPROTO_UDP);
+	fill_transport_layer_after_ip(packet, totalsize, IPPROTO_UDP, 12345, 54321);
+	
 
 	struct sockaddr_ll socket_address;
 	socket_address.sll_ifindex = 2;
@@ -282,7 +293,7 @@ int main(int argc, char *argv[])
 	socket_address.sll_addr[4]=packet[4];
 	socket_address.sll_addr[5]=packet[5];
 
-	assert(sendto(packet_socket,packet,lenpacket,0,(struct sockaddr *)&socket_address, sizeof(socket_address)) != -1);
+	assert(sendto(packet_socket,packet,totalsize,0,(struct sockaddr *)&socket_address, sizeof(socket_address)) != -1);
 
 
 
