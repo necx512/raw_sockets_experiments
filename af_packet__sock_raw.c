@@ -250,25 +250,27 @@ int main(int argc, char *argv[])
 	int lendata = totalsize - sizeof(struct ethhdr) - sizeof(struct iphdr) - sizeof(struct udphdr);
 	unsigned char data[lendata];
 	int lenpacket = sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(data);
-	packet[0] = 0x0c;
-	packet[1] = 0x7e;
-	packet[2] = 0x08;
-	packet[3] = 0xbc;
-	packet[4] = 0x6f;
-	packet[5] = 0x00;
+
+	unsigned char mac1[]={0x0c,0x7e,0x08,0x31,0x12,0x03}; // 192.168.10.1
 	
-	packet[6] = 0x0c;
-	packet[7] = 0x7e;
-	packet[8] = 0x08;
-	packet[9] = 0x49;
-	packet[10] = 0x13;
-	packet[11] = 0x00;
+	unsigned char mac2[]={0x0c,0x7e,0x08,0x9e,0xde,0x02}; // 192.168.10.2
+	unsigned char mac3[]={0x0c,0x7e,0x08,0x9e,0xde,0x01}; // 192.168.30.1
+
+	unsigned char mac4[]={0x0c,0x7e,0x08,0xbc,0x6f,0x00}; // 192.168.30.3
+
+	unsigned char mac5[]={0x0c,0x7e,0x08,0x49,0x13;0x00}; // 192.168.30.4
+
+	for(int i=0;i<6;++i)
+	{
+		packet[i] = mac1[i];//dst
+		packet[6+i] = mac2[i];//src
+	}
 
 	packet[12] = 0x08;
 	packet[13] = 0x00;
 
 	fill_ip_after_eth(packet, lenpacket, "192.168.30.4", "192.168.30.3", IPPROTO_TCP);
-	fill_transport_layer_after_ip(packet, lenpacket, IPPROTO_TCP, 12345, 54321);
+	fill_transport_layer_after_ip(packet, lenpacket, IPPROTO_UDP, 12345, 54321);
 
 	struct sockaddr_ll socket_address;
 	socket_address.sll_ifindex = 2;
