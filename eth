@@ -1,0 +1,3 @@
+sudo ethtool -K ens3 gro off tx off rx off sg off
+echo "=============="
+sudo ethtool -k ens3 | grep -v off
